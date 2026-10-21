@@ -12,8 +12,7 @@ on:
         type: boolean
 
 permissions:
-  contents: read
-  actions: write
+  contents: write
 
 concurrency:
   group: puma-stock-monitor
@@ -25,7 +24,6 @@ jobs:
     timeout-minutes: 3
     env:
       PRODUCT_URL: https://uk.puma.com/uk/en/pd/scuderia-ferrari-replica-singapore-charles-leclerc-baseball-cap/027498?size=0150
-      PREVIOUS_STOCK_STATE: ${{ vars.PUMA_STOCK_STATE }}
       SMTP_HOST: ${{ secrets.SMTP_HOST }}
       SMTP_PORT: ${{ secrets.SMTP_PORT }}
       SMTP_SSL: ${{ secrets.SMTP_SSL }}
@@ -41,6 +39,20 @@ jobs:
       - name: Show Python version
         run: python3 --version
 
+      - name: Restore previous stock state
+        id: previous
+        run: |
+          if git fetch --quiet --no-tags origin state && \
+             state="$(git show FETCH_HEAD:stock-state.txt 2>/dev/null)"; then
+            case "$state" in
+              InStock|OutOfStock) ;;
+              *) state="" ;;
+            esac
+          else
+            state=""
+          fi
+          echo "stock_state=$state" >> "$GITHUB_OUTPUT"
+
       - name: Run unit tests
         run: python3 -m unittest discover -s tests -v
 
@@ -50,17 +62,27 @@ jobs:
 
       - name: Check PUMA stock
         id: monitor
+        env:
+          PREVIOUS_STOCK_STATE: ${{ steps.previous.outputs.stock_state }}
         run: python3 monitor.py --github-actions
 
       - name: Persist stock state
         env:
-          GH_TOKEN: ${{ github.token }}
           STOCK_STATE: ${{ steps.monitor.outputs.stock_state }}
         run: |
-          if gh api "repos/${GITHUB_REPOSITORY}/actions/variables/PUMA_STOCK_STATE" >/dev/null 2>&1; then
-            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/actions/variables/PUMA_STOCK_STATE" \
-              -f name=PUMA_STOCK_STATE -f value="$STOCK_STATE"
-          else
-            gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/variables" \
-              -f name=PUMA_STOCK_STATE -f value="$STOCK_STATE"
-          fi
+          case "$STOCK_STATE" in
+            InStock|OutOfStock) ;;
+            *) echo "Refusing to persist invalid state" >&2; exit 1 ;;
+          esac
+
+          printf '%s\n' "$STOCK_STATE" > stock-state.txt
+          blob="$(git hash-object -w stock-state.txt)"
+          tree="$(printf '100644 blob %s\tstock-state.txt\n' "$blob" | git mktree)"
+          commit="$(printf 'Update PUMA stock state to %s\n' "$STOCK_STATE" | \
+            GIT_AUTHOR_NAME='github-actions[bot]' \
+            GIT_AUTHOR_EMAIL='41898282+github-actions[bot]@users.noreply.github.com' \
+            GIT_COMMITTER_NAME='github-actions[bot]' \
+            GIT_COMMITTER_EMAIL='41898282+github-actions[bot]@users.noreply.github.com' \
+            git commit-tree "$tree")"
+
+          git push --force origin "${commit}:refs/heads/state"
