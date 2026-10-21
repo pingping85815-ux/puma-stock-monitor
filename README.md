@@ -23,10 +23,14 @@ The workflow at `.github/workflows/stock-monitor.yml`:
 - runs on the standard `ubuntu-latest` runner;
 - checks every five minutes and can also be started with **Run workflow**;
 - has no pip dependencies, browser download, cache or artifact storage;
-- stores the last non-sensitive stock state in the repository Actions variable
-  `PUMA_STOCK_STATE`;
+- stores the last non-sensitive stock state in a dedicated `state` branch;
 - serializes runs so two checks cannot race and send duplicate mail;
 - updates the state only after a required restock email succeeds.
+
+The workflow requests only `contents: write`. The `state` branch always
+contains a single, parentless bot commit with one file, `stock-state.txt`.
+Each run replaces that commit, so the state remains durable without growing
+the branch history and without a Personal Access Token.
 
 ### Required Actions secrets
 
@@ -53,8 +57,8 @@ variants except the placeholder-only `.env.example`.
 3. Enable **Send a Gmail SMTP test email before checking stock**.
 4. Run it and confirm every step is green.
 5. Confirm the test email arrives.
-6. Under **Settings → Secrets and variables → Actions → Variables**, confirm
-   `PUMA_STOCK_STATE` was created with `OutOfStock` or `InStock`.
+6. Confirm the repository now has a `state` branch containing
+   `stock-state.txt` with `OutOfStock` or `InStock`.
 
 Keep the local monitor running until this test succeeds. Afterwards the local
 schedule can be disabled to prevent two independent monitors from sending at
