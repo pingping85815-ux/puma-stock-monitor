@@ -1,0 +1,66 @@
+name: PUMA stock monitor
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+    inputs:
+      send_test_email:
+        description: "Send a Gmail SMTP test email before checking stock"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: puma-stock-monitor
+  cancel-in-progress: false
+
+jobs:
+  check-stock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      PRODUCT_URL: https://uk.puma.com/uk/en/pd/scuderia-ferrari-replica-singapore-charles-leclerc-baseball-cap/027498?size=0150
+      PREVIOUS_STOCK_STATE: ${{ vars.PUMA_STOCK_STATE }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_SSL: ${{ secrets.SMTP_SSL }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+      EMAIL_TO: ${{ secrets.EMAIL_TO }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show Python version
+        run: python3 --version
+
+      - name: Run unit tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Send test email
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.send_test_email }}
+        run: python3 monitor.py --test-email
+
+      - name: Check PUMA stock
+        id: monitor
+        run: python3 monitor.py --github-actions
+
+      - name: Persist stock state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STOCK_STATE: ${{ steps.monitor.outputs.stock_state }}
+        run: |
+          if gh api "repos/${GITHUB_REPOSITORY}/actions/variables/PUMA_STOCK_STATE" >/dev/null 2>&1; then
+            gh api --method PATCH "repos/${GITHUB_REPOSITORY}/actions/variables/PUMA_STOCK_STATE" \
+              -f name=PUMA_STOCK_STATE -f value="$STOCK_STATE"
+          else
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/variables" \
+              -f name=PUMA_STOCK_STATE -f value="$STOCK_STATE"
+          fi
