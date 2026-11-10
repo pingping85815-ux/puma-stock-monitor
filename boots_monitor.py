@@ -4,6 +4,7 @@ import os
 from datetime import datetime
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 from zoneinfo import ZoneInfo
 
 import monitor
@@ -63,11 +64,14 @@ def detect(html):
 
 def check():
     try:
-        request = Request(URL, headers={'User-Agent': 'Mozilla/5.0', 'Accept-Language': 'en-GB,en;q=0.9'})
+        request = Request(URL, headers={'User-Agent': 'BootsStockMonitor/1.0', 'Accept-Language': 'en-GB,en;q=0.9'})
         with urlopen(request, timeout=30) as response:
             if response.status != 200 or response.url.split('?')[0] != URL:
                 return UNKNOWN
             return detect(response.read().decode('utf-8', errors='replace'))
+    except HTTPError as exc:
+        print(f'Boots request UNKNOWN: HTTP {exc.code}; no retry')
+        return UNKNOWN
     except Exception as exc:
         print(f'Boots request UNKNOWN: {type(exc).__name__}')
         return UNKNOWN
@@ -88,4 +92,10 @@ def run():
 
 
 if __name__ == '__main__':
-    run()
+    # Reuse the existing trigger, but request Boots only during minutes 00-04
+    # UTC each hour. Other runs preserve confirmed state and never notify.
+    if datetime.now(ZoneInfo('UTC')).minute >= 5:
+        print('Boots UNKNOWN: skipped outside hourly request window')
+        monitor.write_github_output('stock_state', UNKNOWN)
+    else:
+        run()
