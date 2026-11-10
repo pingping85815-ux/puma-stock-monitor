@@ -87,3 +87,64 @@ jobs:
             git commit-tree "$tree")"
 
           git push --force origin "${commit}:refs/heads/state"
+
+  check-boots-stock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_SSL: ${{ secrets.SMTP_SSL }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+      EMAIL_TO: ${{ secrets.EMAIL_TO }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show Python version
+        run: python3 --version
+
+      - name: Restore previous stock state
+        id: previous
+        run: |
+          if git fetch --quiet --no-tags origin boots-state && \
+             state="$(git show FETCH_HEAD:stock-state.txt 2>/dev/null)"; then
+            case "$state" in
+              IN_STOCK|OUT_OF_STOCK) ;;
+              *) state="" ;;
+            esac
+          else
+            state=""
+          fi
+          echo "stock_state=$state" >> "$GITHUB_OUTPUT"
+
+      - name: Check Boots stock
+        id: monitor
+        env:
+          PREVIOUS_STOCK_STATE: ${{ steps.previous.outputs.stock_state }}
+        run: python3 boots_monitor.py
+
+      - name: Persist stock state
+        if: ${{ steps.monitor.outputs.stock_state != 'UNKNOWN' }}
+        env:
+          STOCK_STATE: ${{ steps.monitor.outputs.stock_state }}
+        run: |
+          case "$STOCK_STATE" in
+            IN_STOCK|OUT_OF_STOCK) ;;
+            *) echo "Refusing to persist invalid state" >&2; exit 1 ;;
+          esac
+
+          printf '%s\n' "$STOCK_STATE" > stock-state.txt
+          blob="$(git hash-object -w stock-state.txt)"
+          tree="$(printf '100644 blob %s\tstock-state.txt\n' "$blob" | git mktree)"
+          commit="$(printf 'Update Boots stock state to %s\n' "$STOCK_STATE" | \
+            GIT_AUTHOR_NAME='github-actions[bot]' \
+            GIT_AUTHOR_EMAIL='41898282+github-actions[bot]@users.noreply.github.com' \
+            GIT_COMMITTER_NAME='github-actions[bot]' \
+            GIT_COMMITTER_EMAIL='41898282+github-actions[bot]@users.noreply.github.com' \
+            git commit-tree "$tree")"
+
+          git push --force origin "${commit}:refs/heads/boots-state"
