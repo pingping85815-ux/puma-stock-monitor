@@ -43,6 +43,18 @@ class MonitorTests(unittest.TestCase):
             output.seek(0)
             self.assertEqual(output.read(), "stock_state=OutOfStock\n")
 
+    def test_public_email_settings_and_gmail_defaults(self):
+        env = {
+            "SMTP_USER": "sender@example.com",
+            "SMTP_PASSWORD": "not-a-real-password",
+            "RECIPIENT_EMAIL": "recipient@example.com",
+        }
+        with patch.dict(os.environ, env, clear=True):
+            settings = monitor.smtp_settings()
+        self.assertEqual(settings["host"], "smtp.gmail.com")
+        self.assertEqual(settings["port"], 465)
+        self.assertEqual(settings["to"], "recipient@example.com")
+
 
 if __name__ == "__main__":
     unittest.main()

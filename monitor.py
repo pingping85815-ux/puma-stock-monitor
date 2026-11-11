@@ -183,16 +183,19 @@ def check_product(url: str) -> dict[str, Any]:
 
 
 def smtp_settings() -> dict[str, Any]:
-    required = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASSWORD", "EMAIL_TO"]
+    recipient = os.getenv("RECIPIENT_EMAIL") or os.getenv("EMAIL_TO")
+    required = ["SMTP_USER", "SMTP_PASSWORD"]
     missing = [key for key in required if not os.getenv(key)]
+    if not recipient:
+        missing.append("RECIPIENT_EMAIL")
     if missing:
         raise RuntimeError("Missing email settings: " + ", ".join(missing))
     return {
-        "host": os.environ["SMTP_HOST"],
-        "port": int(os.environ["SMTP_PORT"]),
+        "host": os.getenv("SMTP_HOST", "smtp.gmail.com"),
+        "port": int(os.getenv("SMTP_PORT", "465")),
         "user": os.environ["SMTP_USER"],
         "password": os.environ["SMTP_PASSWORD"],
-        "to": os.environ["EMAIL_TO"],
+        "to": recipient,
         "from": os.getenv("EMAIL_FROM", os.environ["SMTP_USER"]),
         "ssl": env_bool("SMTP_SSL", True),
     }

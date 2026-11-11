@@ -1,86 +1,153 @@
-# PUMA stock monitor
+# PUMA Stock Monitor
 
-A small, dependency-free Python monitor for this PUMA UK product:
+A small, dependency-free PUMA UK stock monitor that runs in GitHub Actions and
+sends an email when a product changes from out of stock to in stock. After
+setup, GitHub runs it in the cloud; Codex and your computer do not need to stay
+online.
 
-- Product: Scuderia Ferrari Replica Singapore Charles Leclerc Baseball Cap
-- SKU: `4070034024903`
-- URL size parameter: `0150`
+The monitor reads the product's schema.org `Product`/`Offer` JSON-LD and uses
+visible page text only as a fallback. Failed or inconclusive checks stop the
+workflow and never generate a restock alert.
 
-It reads PUMA's server-rendered schema.org JSON-LD
-`offers.availability` value. Gmail SMTP mail is sent only when the saved state
-is not `InStock` and the new state is `InStock`. This includes the first cloud
-check when the product is already available.
+## How it avoids duplicate alerts
 
-The monitoring-loop/state approach is adapted from common public stock-monitor
-projects such as
-[`nearyou/pokemon-stock-monitor`](https://github.com/nearyou/pokemon-stock-monitor),
-with original PUMA-specific parsing, SMTP and GitHub Actions state handling.
+The workflow stores only `InStock` or `OutOfStock` in a dedicated `state`
+branch. It sends mail only when the saved value is not `InStock` and the new
+value is `InStock`. Runs are serialized, state is updated only after a required
+email succeeds, and unchanged states are not written again. No credentials are
+stored in the state branch.
 
-## GitHub Actions cloud deployment
+GitHub Actions schedules are best-effort: a run can start late during busy
+periods. Public repositories may also have scheduled workflows disabled after
+60 days without repository activity.
 
-The workflow at `.github/workflows/stock-monitor.yml`:
+## 1. Fork the project
 
-- runs on the standard `ubuntu-latest` runner;
-- checks every five minutes and can also be started with **Run workflow**;
-- has no pip dependencies, browser download, cache or artifact storage;
-- stores the last non-sensitive stock state in a dedicated `state` branch;
-- serializes runs so two checks cannot race and send duplicate mail;
-- updates the state only after a required restock email succeeds.
+1. Sign in to GitHub and open this repository.
+2. Select **Fork** and create the fork in your own account.
+3. In your fork, open **Settings → Actions → General**.
+4. Under **Workflow permissions**, choose **Read and write permissions**, then
+   save. This lets the workflow maintain the non-sensitive `state` branch.
 
-The workflow requests only `contents: write`. The `state` branch always
-contains a single, parentless bot commit with one file, `stock-state.txt`.
-Each run replaces that commit, so the state remains durable without growing
-the branch history and without a Personal Access Token.
+## 2. Choose the product
 
-### Required Actions secrets
+The included PUMA product remains the default. To monitor another PUMA UK
+product, open **Settings → Secrets and variables → Actions → Variables**, add a
+repository variable named `PRODUCT_URL`, and paste the complete product URL.
 
-In the GitHub repository, open **Settings → Secrets and variables → Actions →
-Secrets → New repository secret** and add:
+## 3. Configure email secrets
 
-| Secret | Gmail value |
-| --- | --- |
-| `SMTP_HOST` | `smtp.gmail.com` |
-| `SMTP_PORT` | `465` |
-| `SMTP_SSL` | `true` |
-| `SMTP_USER` | Gmail address used to send mail |
-| `SMTP_PASSWORD` | 16-character Google App Password, not the normal password |
-| `EMAIL_FROM` | Usually the same Gmail address |
-| `EMAIL_TO` | Destination email address |
+Open **Settings → Secrets and variables → Actions → Secrets** and create these
+repository secrets:
 
-Never commit `.env`. The repository `.gitignore` excludes `.env` and all local
-variants except the placeholder-only `.env.example`.
+| Secret | Required | Example / meaning |
+| --- | --- | --- |
+| `RECIPIENT_EMAIL` | Yes | Address that receives alerts |
+| `SMTP_USER` | Yes | Mailbox used to send alerts |
+| `SMTP_PASSWORD` | Yes | App password or SMTP authorization key, not your normal password |
+| `SMTP_HOST` | No | Defaults to `smtp.gmail.com` |
+| `SMTP_PORT` | No | Defaults to `465` |
+| `SMTP_SSL` | No | Defaults to `true`; use `false` for STARTTLS, commonly on port `587` |
 
-### First cloud test
+For Gmail, enable two-step verification and create a Google App Password. Use
+that 16-character app password as `SMTP_PASSWORD`. Never put a real address,
+password, token, or authorization key in the repository, workflow file, issue,
+or Actions log.
 
-1. Open **Actions → PUMA stock monitor**.
-2. Select **Run workflow**.
-3. Enable **Send a Gmail SMTP test email before checking stock**.
-4. Run it and confirm every step is green.
-5. Confirm the test email arrives.
-6. Confirm the repository now has a `state` branch containing
-   `stock-state.txt` with `OutOfStock` or `InStock`.
+Other mail providers can be used by setting their SMTP host, port, SSL mode,
+username, and authorization key. Some providers require the sender address to
+match `SMTP_USER`.
 
-Keep the local monitor running until this test succeeds. Afterwards the local
-schedule can be disabled to prevent two independent monitors from sending at
-the same time.
+## 4. Enable and test GitHub Actions
 
-## Local use
+1. Open the **Actions** tab in your fork.
+2. If GitHub displays a warning for forked workflows, select **I understand my
+   workflows, go ahead and enable them**.
+3. Select **PUMA stock monitor → Run workflow**.
+4. Enable **Send an SMTP test email before checking stock**.
+5. Select **Run workflow** and wait for a green check mark.
+6. Confirm that the test email arrived.
+
+The first successful stock check creates the `state` branch. If the product is
+already in stock on that first check, one alert is sent. Later checks do not
+repeat it while the product remains in stock.
+
+## 5. Change the monitoring frequency
+
+Edit `.github/workflows/stock-monitor.yml` in your fork and change the `cron`
+line under `schedule`. GitHub uses UTC and supports a minimum scheduled interval
+of five minutes.
+
+Examples:
+
+```yaml
+# Every 5 minutes, offset from busy round-number times
+- cron: "2-59/5 * * * *"
+
+# Every 15 minutes
+- cron: "7-59/15 * * * *"
+
+# Once per hour
+- cron: "17 * * * *"
+```
+
+Manual **Run workflow** checks remain available regardless of the schedule.
+
+## Troubleshooting
+
+### The test email fails
+
+- Confirm all three required secrets exist and their names match exactly.
+- For Gmail, use an App Password rather than your normal account password.
+- Check whether your provider expects SSL on port 465 or STARTTLS on port 587.
+- Open the failed Actions run and inspect the failing step. GitHub masks secret
+  values, but do not copy secrets into logs while debugging.
+
+### The scheduled workflow does not run exactly on time
+
+GitHub may delay scheduled jobs, especially near common clock boundaries. This
+workflow intentionally uses an offset schedule. Scheduled workflows in inactive
+public repositories may be disabled after 60 days; re-enable them in Actions.
+
+### The stock check fails
+
+PUMA may temporarily reject or rate-limit a request, or its page structure may
+change. A failed check exits without sending a restock email and leaves the
+saved state unchanged, so a later successful run can try again safely.
+
+### Persisting the state fails
+
+Confirm **Read and write permissions** is enabled under **Settings → Actions →
+General** and that repository rules do not block the `state` branch. The
+workflow retries transient GitHub push failures three times.
+
+### I changed products and received an immediate alert
+
+Delete the `state` branch before the first run for the new product, or accept
+the single initial alert if the new product is already available.
+
+## Optional local use
+
+Local use is not required for GitHub Actions. If desired:
 
 ```bash
 cp .env.example .env
 python3 monitor.py --test-email
 python3 monitor.py --once
-python3 monitor.py
 ```
 
-Local state is stored in the ignored `state.json`. Local credentials remain in
-the ignored `.env`.
+The ignored `.env` file holds local settings, `state.json` holds local stock
+state, and `monitor.log` holds local logs. None should be committed.
 
-## Operational notes
+## Security and privacy
 
-- GitHub documents five minutes as the shortest Actions schedule interval, but
-  scheduled jobs can be delayed or occasionally dropped during high load.
-- In a public repository, GitHub may disable scheduled workflows after 60 days
-  with no repository activity; re-enable the workflow from the Actions page.
-- This project uses only standard public-repository runners and does not select
-  larger runners or any paid service.
+- Runtime code uses only the Python standard library; `requirements.txt` is
+  intentionally empty of third-party packages.
+- Secrets are read from GitHub Actions Secrets or a local ignored `.env` file.
+- The repository contains no personal email address, password, token, machine
+  path, or local log.
+- The workflow prints stock status and product metadata, never SMTP credentials.
+
+## License
+
+See [LICENSE](LICENSE).

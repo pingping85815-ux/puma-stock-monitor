@@ -4,5 +4,11 @@
 .venv/
 __pycache__/
 state.json
+state.json.tmp
+stock-state.txt
 *.log
+*.out
+.idea/
+.vscode/
+cloudflare-trigger/
 .DS_Store

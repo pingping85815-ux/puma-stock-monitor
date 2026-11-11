@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       send_test_email:
-        description: "Send a Gmail SMTP test email before checking stock"
+        description: "Send an SMTP test email before checking stock"
         required: false
         default: false
         type: boolean
@@ -24,14 +24,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 3
     env:
-      PRODUCT_URL: https://uk.puma.com/uk/en/pd/scuderia-ferrari-replica-singapore-charles-leclerc-baseball-cap/027498?size=0150
-      SMTP_HOST: ${{ secrets.SMTP_HOST }}
-      SMTP_PORT: ${{ secrets.SMTP_PORT }}
-      SMTP_SSL: ${{ secrets.SMTP_SSL }}
+      PRODUCT_URL: ${{ vars.PRODUCT_URL || 'https://uk.puma.com/uk/en/pd/scuderia-ferrari-replica-singapore-charles-leclerc-baseball-cap/027498?size=0150' }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST || 'smtp.gmail.com' }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT || '465' }}
+      SMTP_SSL: ${{ secrets.SMTP_SSL || 'true' }}
       SMTP_USER: ${{ secrets.SMTP_USER }}
       SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-      EMAIL_TO: ${{ secrets.EMAIL_TO }}
+      RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
 
     steps:
       - name: Check out repository
@@ -68,6 +67,7 @@ jobs:
         run: python3 monitor.py --github-actions
 
       - name: Persist stock state
+        if: ${{ steps.previous.outputs.stock_state != steps.monitor.outputs.stock_state }}
         env:
           STOCK_STATE: ${{ steps.monitor.outputs.stock_state }}
         run: |
@@ -86,7 +86,15 @@ jobs:
             GIT_COMMITTER_EMAIL='41898282+github-actions[bot]@users.noreply.github.com' \
             git commit-tree "$tree")"
 
-          git push --force origin "${commit}:refs/heads/state"
+          for attempt in 1 2 3; do
+            if git push --force origin "${commit}:refs/heads/state"; then
+              exit 0
+            fi
+            echo "State push attempt $attempt failed; retrying shortly" >&2
+            sleep $((attempt * 3))
+          done
+          echo "Failed to persist stock state after 3 attempts" >&2
+          exit 1
 
   check-boots-stock:
     runs-on: ubuntu-latest
